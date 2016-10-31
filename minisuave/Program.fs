@@ -1,10 +1,11 @@
 module minisuave
 open Suave.Http
 open Suave.Console
-open Suave.Sucessful
+open Suave.Successful
 
 
 [<EntryPoint>]
+
 let main argv =
     let request = {Route = ""; Type = Suave.Http.GET}
     let response = {Content = ""; StatusCode = 200 }
