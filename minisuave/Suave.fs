@@ -1,74 +1,107 @@
+
 namespace Suave
 
-module Http = 
-    type RequestType = GET | POST
-    
-    type Request = {
-        Route : string
-        Type : RequestType
-    }
+module Http =
 
-    type Response = {
-        Content : string
-        StatusCode : int
-    }
+  type RequestType = GET | POST
 
-    type Context = {
-        Request : Request
-        Response : Response        
-    }
+  type Request = {
+    Route : string
+    Type : RequestType
+  }
 
-    type WebPart = Context -> Async<Context option>
+  type Response = {
+    Content : string
+    StatusCode : int
+  }
 
-module Successful = 
-    open Http
+  type Context = {
+    Request : Request
+    Response : Response
+  }
 
-    let OK content context = 
-        { context with Response = { Content = content; StatusCode = 200 } }
-        |> Some
-        |> async.Return
-        // async.Return (Some ({ context with Response = { Content = content; StatusCode = 200 } }))
-    let BAD content context =
-        None
-        |> async.Return
-        
+  type WebPart = Context -> Async<Context option>
+
+module Successful =
+  open Http
+
+  let OK content context =
+    {context with Response = {Content = content; StatusCode = 200}}
+    |> Some
+    |> async.Return
+
+
+module Combinators =
+
+  let compose first second x = async {
+    let! firstContext = first x
+    match firstContext with
+    | None -> return None
+    | Some context ->
+      let! secondContext = second context
+      return secondContext
+  }
+
+  let (>=>) = compose
+
+module Filters =
+  open Http
+
+  let iff condition context =
+    if condition context then
+      context |> Some |> async.Return
+    else
+      None |> async.Return
+
+  let GET = iff (fun context -> context.Request.Type = GET)
+  let POST = iff (fun context -> context.Request.Type = POST)
+  let Path path = iff (fun context -> context.Request.Route = path)
+
+  let rec Choose webparts context = async {
+    match webparts with
+    | [] -> return None
+    | x :: xs ->
+      let! result = x context
+      match result with
+      | Some x -> return Some x
+      | None -> return! Choose xs context
+  }
 
 module Console =
-    open Http
+  open Http
+  let execute inputContext webpart =
+    async {
+      let! outputContext = webpart inputContext
+      match outputContext with
+      | Some context ->
+        printfn "--------------"
+        printfn "Code : %d" context.Response.StatusCode
+        printfn "Output : %s" context.Response.Content
+        printfn "--------------"
+      | None ->
+        printfn "No Output"
+    } |> Async.RunSynchronously
 
-    let execute inputContext webpart = 
-        async {
-            let! outputContext = webpart inputContext 
-            match outputContext with
-            | Some context ->
-                printfn "----------------"
-                printfn "Code: %d" context.Response.StatusCode
-                printfn "Output: %s" context.Response.Content
-                printfn "----------------"
-            | None ->
-                printfn "No Output"    
-        }  |> Async.RunSynchronously
+  let parseRequest (input : System.String) =
+    let parts = input.Split([|';'|])
+    let rawType = parts.[0]
+    let route = parts.[1]
+    match rawType with
+    | "GET" -> {Type = GET; Route = route}
+    | "POST" -> {Type = POST; Route = route}
+    | _ -> failwith "invalid request"
 
-    let parseRequest (input : System.String) =
-        let parts = input.Split([|';'|])
-        let rawType = parts.[0]
-        let route = parts.[1]
-        match rawType with 
-        | "GET" -> {Type = GET; Route = route}
-        | "POST" -> {Type = POST; Route = route}
-        | _ -> failwith "Invalid request"  
-
-    let executeInLoop inputContext webPart = 
-        let mutable continueLooping = true
-        while continueLooping do 
-            printf "Enter Input Route : " 
-            let input = System.Console.ReadLine()
-            try 
-                if input = "exit" then
-                    continueLooping <- false
-                else
-                    let context = {inputContext with Request = parseRequest input}
-                    execute context webPart
-            with 
-                | ex ->
-                  printfn "Error : %s" ex.Message               
+  let executeInLoop inputContext webpart =
+    let mutable continueLooping = true
+    while continueLooping do
+      printf "Enter Input Route : "
+      let input = System.Console.ReadLine()
+      try
+        if input = "exit" then
+          continueLooping <- false
+        else
+          let context = {inputContext with Request = parseRequest input}
+          execute context webpart
+      with
+        | ex ->
+          printfn "Error : %s" ex.Message
